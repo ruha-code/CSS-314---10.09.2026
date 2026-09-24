@@ -1,0 +1,8 @@
+
+
+Name                      : AMD Ryzen 7 7435HS                             
+NumberOfCores             : 8
+NumberOfLogicalProcessors : 16
+
+
+
