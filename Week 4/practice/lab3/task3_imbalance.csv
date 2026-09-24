@@ -1,0 +1,3 @@
+Policy,Threads,Chunk_Size,Time_s,Imbalance_Ratio,Max_Work,Min_Work,Avg_Work
+Static_Block,8,135,0.2036,3.2622,83203218,376037,25389609.9
+Dynamic_C16,8,16,0.0796,0.4782,31862596,19721618,25389609.9
