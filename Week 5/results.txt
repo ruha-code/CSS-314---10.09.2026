@@ -1,0 +1,90 @@
+=========================================================
+   CSS-314 WEEK 5 LAB PRACTICUM: OpenMP Multi-Core Scaling
+   STUDENT: Ruslan Ussen | ID: 230103026 | SESSION: 02-N (Group 06-P)
+   HOST MACHINE: AMD Ryzen 7 7435HS (8 Cores / 16 Threads)
+   OS: Windows 11 Pro | Python 3.12.10 | Numba 0.67.0 | NumPy 2.5.3
+   DATE: 2026-10-01
+=========================================================
+
+TABLE 1: BENCHMARK RESULTS
+----------------------------------------------------------------------------------------
+Benchmark Challenge             | Threads | Array Size / Samples | Time (s) | Speedup | Efficiency
+----------------------------------------------------------------------------------------
+Challenge 1: Monte Carlo (1T)   | 1       | 120,000,000          | 1.9591   | 1.00    x| 100.0%
+Challenge 1: Monte Carlo (2T)   | 2       | 120,000,000          | 0.9940   | 1.97    x| 98.5%
+Challenge 1: Monte Carlo (4T)   | 4       | 120,000,000          | 0.6547   | 2.99    x| 74.8%
+Challenge 1: Monte Carlo (8T)   | 8       | 120,000,000          | 0.5009   | 3.91    x| 48.9%
+Challenge 1: Monte Carlo (16T)  | 16      | 120,000,000          | 0.4882   | 4.01    x| 25.1%
+Challenge 2: Mandelbrot (Rows)  | 16      | 2500 x 2500          | 0.7180   | N/A     | N/A
+Challenge 2: Mandelbrot (Cols)  | 16      | 2500 x 2500          | 0.7036   | N/A     | N/A
+Challenge 3: Heat Stencil (f64) | 16      | 1500 x 1500 x 300    | 0.4219   | N/A     | N/A
+Challenge 3: Heat Stencil (f32) | 16      | 1500 x 1500 x 300    | 0.0985   | N/A     | N/A
+
+Throughput Summary (Challenge 3):
+  float64 Stencil Throughput : 1599.86 Megacells/sec
+  float32 Stencil Throughput : 6853.10 Megacells/sec
+  Precision Speedup (f64/f32): 4.28x
+
+=========================================================
+TECHNICAL DELIVERABLES & QUESTIONS
+=========================================================
+
+--- Challenge 1: The Core Speedometer & Amdahl's Law ---
+
+A. Baseline T_1 and maximum multi-thread runtime T_max:
+   - T_1 (1 thread)   = 1.9591 s
+   - T_max (16 threads) = 0.4882 s
+   - Observed Speedup   = 4.01x, Parallel Efficiency = 25.1%
+
+B. Why is the warm-up call _ = monte_carlo_pi(10_000) strictly required before recording benchmark timings?
+   Numba compiles functions Just-In-Time (JIT) using LLVM. On the first call, it has to parse the code, infer types, optimize loops for OpenMP, and compile down to native machine code. That initial compilation takes around 200-400 ms. The warm-up call runs the compilation beforehand so that benchmark timings measure pure native CPU execution without compile overhead.
+
+C. Did your parallel efficiency stay at 100% when scaling from 1 to max threads? What architectural factors explain the degradation?
+   No, efficiency dropped from 100% (1T) down to 25.1% (16T).
+   1. Physical vs SMT cores: Ryzen 7 7435HS has 8 physical cores and 16 logical threads (SMT). Beyond 8 threads, two threads run on the same physical core, sharing execution units (ALUs/FPU) and L1/L2 caches. SMT gives only ~20-30% extra throughput instead of 2x.
+   2. CPU clock scaling: Single-thread boost reaches ~4.5 GHz, but with all 16 threads active, all-core clocks drop to ~3.8-3.9 GHz due to power/thermal TDP limits.
+   3. OpenMP overhead: Thread synchronization and barrier reduction overhead become a larger percentage of total time at sub-second durations.
+
+D. Why does inside_circle += 1 inside prange not corrupt the count? What implicit OpenMP reduction construct does Numba generate here?
+   Numba detects the "+=" operator inside prange and automatically generates an OpenMP reduction (equivalent to "#pragma omp parallel for reduction(+:inside_circle)"). Each thread gets a private accumulator in a CPU register/L1 cache. Each thread increments its own local variable without locks, and at the end of the loop, OpenMP sums all private counts into the total. There are no race conditions or lost updates.
+
+
+--- Challenge 2: Load Imbalance & Dynamic Scheduling ---
+
+A. Compare t_rows vs t_cols. Which axis decomposition completed faster on your machine and why?
+   - t_rows = 0.7180 s
+   - t_cols = 0.7036 s
+   Column decomposition was slightly faster. Mandelbrot is compute-bound (up to 1000 math iterations per pixel in CPU registers), which dominates over memory writes. Slicing by columns distributes the heavy central cardioid bulb more symmetrically across all threads along the horizontal axis, leading to a slightly more balanced workload than slicing by rows.
+
+B. Explain how NumPy's C-contiguous (row-major) memory layout interacts with CPU cache lines when threads write to img[r, c] vs img[c, r]:
+   NumPy arrays use row-major order, so adjacent elements in a row are next to each other in memory.
+   - CPU caches load data in 64-byte cache lines (16 int32 pixels).
+   - Writing row-by-row (img[r, c]) has good spatial locality: one cache line fetch covers 16 consecutive pixel writes with zero miss penalty.
+   - Writing column-by-column (img[c, r]) jumps by row length (2500 * 4 bytes = 10 KB). Every write lands on a different cache line, causing cache misses, cache evictions, and false sharing between threads writing to nearby addresses.
+
+C. Load imbalance analysis: If thread 0 receives the top 20% of rows and thread 2 receives the center 20% of rows, why does one thread idle while the other struggles? How does OpenMP dynamic scheduling resolve this?
+   Outer points in the complex plane escape in only 2-3 iterations, so Thread 0 finishes almost instantly and sits idle waiting at the barrier. Center points inside the cardioid never escape and run all 1000 iterations, so Thread 2 does all the heavy work alone.
+   Static scheduling splits rows evenly upfront, wasting idle cores. Dynamic scheduling (schedule(dynamic, chunk)) uses a shared queue where threads grab small chunks on demand. Fast threads take more chunks and slow threads take fewer, keeping all 16 cores 100% busy until finished.
+
+D. Visual artifact:
+   Saved as mandelbrot_output.png (2500x2500 resolution, 300 DPI).
+
+
+--- Challenge 3: Stencil Computation & Memory Bandwidth ---
+
+A. Record your benchmark runtime and Megacells/sec throughput in Table 1:
+   - float64: Runtime = 0.4219 s, Throughput = 1599.86 Megacells/sec (1500x1500 grid, 300 steps).
+
+B. Change the array precision from np.float64 to np.float32. Re-run the test. By what factor did runtime decrease? Why does halving memory footprint improve stencil throughput far more than compute capability?
+   - float64: 0.4219 s (1599.86 Megacells/sec)
+   - float32: 0.0985 s (6853.10 Megacells/sec)
+   - Runtime decreased by 4.28x.
+   Why: The 5-point stencil only does 5 math operations for 6 memory accesses (reading 5 neighbors, writing 1). Arithmetic intensity is very low (~0.15 FLOP/byte), making it strictly memory-bandwidth bound.
+   1. Halving precision to float32 (4 bytes vs 8 bytes) cuts RAM bus traffic in half.
+   2. A 64-byte cache line fits 16 floats instead of 8 doubles, keeping neighbor rows in L1/L2 cache longer and reducing cache misses.
+   3. AVX2 SIMD registers process 8 floats at once instead of 4 doubles.
+   Because the bottleneck was memory bandwidth, these cache and bandwidth savings give a 4.28x speedup.
+
+C. Memory Roofline Model: Explain why adding twice as many CPU cores does not produce a 2x speedup on stencil codes once memory bandwidth is saturated:
+   In the Roofline model, performance is bounded by either peak compute or memory bandwidth (I * B_mem). Because stencil has very low arithmetic intensity (I ~ 0.15), it hits the memory bandwidth ceiling at low core counts.
+   Adding twice as many CPU cores doubles the theoretical compute capacity, but does not increase physical RAM bandwidth (dual-channel DDR5 bus remains the same speed). Once the memory bus is 100% saturated handling cache misses, extra cores just stall waiting on memory, so adding more cores gives zero speedup.

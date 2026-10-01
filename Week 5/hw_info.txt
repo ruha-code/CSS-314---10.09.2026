@@ -1,0 +1,12 @@
+Name                      : AMD Ryzen 7 7435HS
+NumberOfCores             : 8
+NumberOfLogicalProcessors : 16
+Architecture              : x86_64 (Zen 3+)
+L1 Data Cache             : 8 x 32 KB (64-byte line size)
+L2 Cache                  : 8 x 512 KB
+L3 Cache                  : 16 MB Shared
+System RAM                : 16 GB Dual-Channel DDR5
+OS                        : Windows 11 Pro for Workstations
+Python Version            : 3.12.10
+Numba Version             : 0.67.0
+NumPy Version             : 2.5.3
